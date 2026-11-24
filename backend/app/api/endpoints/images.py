@@ -124,12 +124,12 @@ def _cache_path_for(url: str, content_type: str) -> "object":
 
 
 def _find_existing_cache(url: str):
-    """按 URL 哈希查找任意扩展名的已有缓存"""
+    """按 URL 哈希查找任意扩展名的已有缓存，返回 (文件路径, 扩展名)"""
     digest = hashlib.sha256(url.encode("utf-8")).hexdigest()
     for ext in EXT_BY_TYPE.values():
         candidate = IMAGE_CACHE_DIR / f"{digest}{ext}"
         if candidate.exists() and candidate.stat().st_size > 0:
-            return candidate, EXT_BY_TYPE[ext]
+            return candidate, ext
     return None, None
 
 
