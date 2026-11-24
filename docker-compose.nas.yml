@@ -1,6 +1,7 @@
 services:
   hanime-server:
-    image: ghcr.io/patchourinya/hanime-server:latest
+    # v4.0.3: 使用本仓库自行构建的镜像（含图片代理/系列批量下载等新功能）
+    image: ghcr.io/15054178258/hanime-server:latest
     container_name: hanime-server
     ports:
       - "7788:7788"
