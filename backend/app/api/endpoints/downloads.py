@@ -257,8 +257,30 @@ async def detect_series(request: SeriesDetectRequest, user: dict = Depends(get_c
         return {"has_series": False, "message": "无法获取视频详情"}
 
     series_videos = video_detail.series_videos or []
+
+    # v4.0.4: 实时兜底——详情缓存里系列为空时（详情缓存 6h，可能缓存了空系列），
+    # 现场用系列名搜索补全，并把结果回填进详情缓存
     if not series_videos:
-        return {"has_series": False, "message": "该视频没有同系列视频"}
+        logger.info(f"detect: 详情中无系列数据，实时搜索补全（video_id={request.video_id}）")
+        try:
+            series_videos = await video_service._find_series_by_search(
+                video_detail.title, request.video_id
+            )
+        except Exception as e:
+            logger.warning(f"detect 实时搜索补全失败: {e}")
+        if series_videos:
+            try:
+                video_detail.series_videos = series_videos
+                from app.services.video_service import _cache_set_video_detail
+                _cache_set_video_detail(request.video_id, video_detail)
+            except Exception as e:
+                logger.warning(f"detect 回填系列缓存失败: {e}")
+
+    if not series_videos:
+        return {
+            "has_series": False,
+            "message": "未检测到同系列影片（源站详情页无系列区块，搜索也未命中）"
+        }
 
     # 检查哪些同系列视频已经下载
     already_downloaded = []
@@ -312,7 +334,7 @@ async def detect_series(request: SeriesDetectRequest, user: dict = Depends(get_c
         "has_series": True,
         "current_video_id": request.video_id,
         "current_title": video_detail.title,
-        "series_videos": [{"video_id": sv.video_id, "title": sv.title, "cover_url": sv.cover_url or ""} for sv in series_videos],
+        "series_videos": [{"video_id": sv.video_id, "title": sv.title, "cover_url": sv.cover_url or "", "duration": sv.duration or ""} for sv in series_videos],
         "already_downloaded": unique_downloaded,
         "suggested_series_name": suggested_name,
         "merge_plan": merge_plan

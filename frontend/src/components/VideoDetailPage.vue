@@ -94,9 +94,9 @@
               <el-icon><Download /></el-icon> 下载
             </el-button>
 
-            <!-- 如果有系列，则添加一个系列下载按钮 -->
-            <el-button v-if="hasSeriesVideos" type="success" :disabled="!videoDetail.video_id" @click="openSeriesDialog">
-              <el-icon><VideoCamera /></el-icon> 系列下载
+            <!-- 系列下载按钮：常驻显示，点击时若详情无系列数据则现场检测 -->
+            <el-button type="success" :loading="isDetectingSeries" :disabled="!videoDetail.video_id" @click="openSeriesDialog">
+              <el-icon v-if="!isDetectingSeries"><VideoCamera /></el-icon> 系列下载
             </el-button>
 
             <!-- 收藏按钮 -->
@@ -385,6 +385,7 @@ import { useDownloadStore } from '../stores/download';
 import { DownloadApi } from '../api/download';
 import { AccountApi, UserPlaylist } from '../api/account';
 import request from '../utils/request';
+import { proxiedImageUrl } from '../utils/image';
 import defaultAvatar from '../assets/default-avatar.svg';
 
 export default defineComponent({
@@ -420,6 +421,7 @@ export default defineComponent({
     const isDownloading = ref(false);
     const isDownloadingCover = ref(false);
     const seriesDialogVisible = ref(false);
+    const isDetectingSeries = ref(false);
     const selectAll = ref(false);
     const selectedSeries = ref<string[]>([]);
     const selectedSeriesMap = ref<Record<string, boolean>>({});
@@ -861,24 +863,53 @@ export default defineComponent({
       updateSelectedSeries();
     };
     
-    // 打开系列视频选择对话框
-    const openSeriesDialog = () => {
-      if (!hasSeriesVideos.value || !videoDetail.value.series_videos) {
-        ElMessage.warning('该视频没有系列内容');
+    // 打开系列视频选择对话框（详情无系列数据时现场调 detect 接口检测）
+    const openSeriesDialog = async () => {
+      // 已有系列数据：直接打开
+      if (hasSeriesVideos.value && videoDetail.value.series_videos?.length) {
+        initSeriesDialog();
         return;
       }
-      
+
+      // 无系列数据：现场检测（后端会做搜索兜底并回填缓存）
+      if (!videoDetail.value.video_id || isDetectingSeries.value) return;
+      isDetectingSeries.value = true;
+      try {
+        const result = await DownloadApi.detectSeries(videoDetail.value.video_id);
+        if (result?.has_series && result.series_videos?.length) {
+          // 用检测结果填充 series_videos（封面走代理，避免外链加载失败）
+          videoDetail.value.series_videos = result.series_videos.map((v: any) => ({
+            video_id: v.video_id,
+            title: v.title,
+            cover_url: proxiedImageUrl(v.cover_url),
+            duration: v.duration || ''
+          }));
+          ElMessage.success(`检测到 ${result.series_videos.length} 部同系列影片`);
+          initSeriesDialog();
+        } else {
+          ElMessage.warning(result?.message || '未检测到同系列影片');
+        }
+      } catch (e) {
+        console.error('检测系列失败:', e);
+        ElMessage.error('检测系列信息失败，请稍后重试');
+      } finally {
+        isDetectingSeries.value = false;
+      }
+    };
+
+    // 初始化系列选择对话框（清空勾选、标记已下载）
+    const initSeriesDialog = () => {
       seriesDialogVisible.value = true;
       selectAll.value = false;
       selectedSeries.value = [];
       selectedSeriesMap.value = {};
-      
+
       // 初始化所有视频为未选中状态
       if (videoDetail.value.series_videos) {
         videoDetail.value.series_videos.forEach(video => {
           selectedSeriesMap.value[video.video_id] = false;
         });
-    
+
         // 显示已下载状态
         highlightDownloadedSeriesVideos();
       }
@@ -1225,6 +1256,7 @@ export default defineComponent({
       updateCommentCount,
       goToSearch,
       hasSeriesVideos,
+      isDetectingSeries,
       openSeriesDialog,
       handleSelectAllChange,
       updateSelectedSeries,

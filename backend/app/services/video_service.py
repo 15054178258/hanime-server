@@ -1323,21 +1323,46 @@ class VideoService:
         """
         series_name = extract_series_name(video_title)
         if not series_name or len(series_name) < 2:
+            logger.info(f"系列搜索补全跳过：无法从标题提取系列名，原始标题='{video_title}'（当前视频 {video_id}）")
             return []
 
-        result = await self.search_videos(
-            query=series_name, genre=None, tags=None, broad=None,
-            sort="最新上市", year=None, month=None, page=1
-        )
+        def _norm(s: str) -> str:
+            """归一化：去所有空白 + 忽略大小写，避免全半角空格差异导致匹配失败"""
+            return ''.join((s or '').split()).casefold()
+
+        target = _norm(series_name)
+
+        # 依次尝试多个查询词：完整系列名 → 前 12 字符
+        # （源站搜索对超长日文标题召回差，短词能搜到更多集数）
+        queries = [series_name]
+        short = series_name[:12]
+        if len(short) >= 4 and short != series_name:
+            queries.append(short)
 
         candidates: List[VideoPreview] = []
         seen_ids = set()
-        for v in (result.detailed_videos or []):
-            if v.video_id == video_id or v.video_id in seen_ids:
+        for q in queries:
+            try:
+                result = await self.search_videos(
+                    query=q, genre=None, tags=None, broad=None,
+                    sort="最新上市", year=None, month=None, page=1
+                )
+            except Exception as e:
+                logger.warning(f"系列搜索查询 '{q}' 失败: {e}")
                 continue
-            if extract_series_name(v.title) == series_name:
-                seen_ids.add(v.video_id)
-                candidates.append(v)
+
+            for v in (result.detailed_videos or []):
+                if v.video_id == video_id or v.video_id in seen_ids:
+                    continue
+                v_series = _norm(extract_series_name(v.title)) if v.title else ''
+                v_title = _norm(v.title) if v.title else ''
+                # 匹配规则：系列名完全一致，或候选标题以系列名开头（兼容提取遗漏的后缀）
+                if v_series == target or (target and v_title.startswith(target)):
+                    seen_ids.add(v.video_id)
+                    candidates.append(v)
+
+            if candidates:
+                break
 
         if candidates:
             logger.info(
