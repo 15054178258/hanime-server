@@ -32,6 +32,8 @@ class Settings(BaseModel):
     APP_NAME: str = os.getenv("APP_NAME", "HanimeViewer")
     APP_DESCRIPTION: str = os.getenv("APP_DESCRIPTION", "HanimeViewer API服务")
     APP_VERSION: str = os.getenv("APP_VERSION", "4.0.3")
+    # JWT 登录有效期（分钟），默认 30 天；配合 /auth/refresh 滑动续期，常用用户无需重复登录
+    JWT_EXPIRE_MINUTES: int = int(os.getenv("JWT_EXPIRE_MINUTES", "43200"))
     RELOAD: bool = os.getenv("RELOAD", "False").lower() in ("true", "1", "t")
     HOST: str = os.getenv("HOST", "0.0.0.0")
     PORT: int = int(os.getenv("PORT", "8000"))

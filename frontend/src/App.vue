@@ -85,6 +85,25 @@ const fetchUserInfo = async () => {
   }
 };
 
+// 登录态滑动续期：应用打开及长时间驻留时换发新 token，常用则永不掉登录
+let refreshing = false;
+const refreshToken = async () => {
+  if (refreshing || !localStorage.getItem('token')) return;
+  refreshing = true;
+  try {
+    const response = await request.post('/auth/refresh');
+    if (response.data?.access_token) {
+      localStorage.setItem('token', response.data.access_token);
+      localStorage.setItem('tokenType', response.data.token_type || 'bearer');
+      localStorage.setItem('loginTime', Date.now().toString());
+    }
+  } catch (e) {
+    // 续期失败（token 已过期等）静默忽略，后续请求 401 时统一处理
+  } finally {
+    refreshing = false;
+  }
+};
+
 // 应用主题到 HTML 元素
 const setTheme = () => {
   const htmlEl = document.documentElement;
@@ -139,6 +158,9 @@ onMounted(async () => {
   // 仅已登录时初始化下载存储和WebSocket连接
   if (localStorage.getItem('token')) {
     downloadStore.initializeDownloads();
+    // 登录态滑动续期：打开应用即换发新 token，之后每 6 小时续一次
+    refreshToken();
+    setInterval(refreshToken, 6 * 60 * 60 * 1000);
   }
   // v4.0.0: 获取当前用户角色（管理员入口）
   fetchUserInfo();

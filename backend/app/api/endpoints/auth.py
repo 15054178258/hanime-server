@@ -74,6 +74,21 @@ async def get_auth_status(user: dict = Depends(get_current_user)):
     return AuthStatusResponse(authenticated=True, username=user["username"])
 
 
+@router.post("/auth/refresh", response_model=LoginResponse)
+async def refresh_token(user: dict = Depends(get_current_user)):
+    """滑动续期：为已登录用户签发新 token（保留原 db_type/db_user_id）"""
+    from app.config import settings as app_settings
+    data = {"sub": user["username"], "db_type": user.get("db_type", "local")}
+    if user.get("db_type") == "cloud" and user.get("db_user_id"):
+        data["db_user_id"] = user["db_user_id"]
+    access_token = create_access_token(data=data)
+    logger.info(f"登录态续期: {user['username']}")
+    return LoginResponse(
+        access_token=access_token,
+        expires_in=app_settings.JWT_EXPIRE_MINUTES * 60,
+    )
+
+
 @router.get("/auth/me")
 async def get_auth_me(user: dict = Depends(get_current_user)):
     """获取当前用户信息（含角色）"""

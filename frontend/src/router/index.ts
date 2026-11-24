@@ -121,11 +121,21 @@ const getToken = (): string | null => {
 const isTokenValid = (): boolean => {
     const token = getToken();
     if (!token) return false;
-    
+
+    // 优先解析 JWT 自带的 exp 过期时间（与后端有效期精确同步）
+    try {
+        const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+        if (payload?.exp) {
+            return payload.exp * 1000 > Date.now();
+        }
+    } catch {
+        // token 格式异常则回退到 loginTime 判断
+    }
+
     const loginTime = localStorage.getItem('loginTime');
     if (!loginTime) return false;
-    
-    const expireTime = 24 * 60 * 60 * 1000;
+
+    const expireTime = 30 * 24 * 60 * 60 * 1000;
     return Date.now() - parseInt(loginTime) < expireTime;
 };
 

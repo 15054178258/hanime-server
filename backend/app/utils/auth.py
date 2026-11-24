@@ -9,7 +9,8 @@ from app.config import settings, logger
 
 JWT_SECRET_KEY = settings.APP_NAME + "_SECRET_KEY_2026"
 JWT_ALGORITHM = "HS256"
-JWT_EXPIRE_MINUTES = 1440
+# JWT 有效期（分钟），可通过环境变量 JWT_EXPIRE_MINUTES 调整，默认 30 天
+JWT_EXPIRE_MINUTES = int(getattr(settings, "JWT_EXPIRE_MINUTES", 43200))
 
 security = HTTPBearer()
 
