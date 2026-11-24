@@ -47,16 +47,26 @@ def _cache_set_video_detail(video_id: str, detail) -> None:
 
 def extract_series_name(title: str) -> str:
     """
-    从番剧标题中提取系列名（去掉编号后缀）
+    从番剧标题中提取系列名（去掉编号后缀与字幕/清晰度等标签）
 
     示例：
     "不潔之星・赤" -> "不潔之星"
     "OVA ケガレボシ・赤" -> "OVA ケガレボシ"
     "不洁之星 2" -> "不洁之星"
     "某番剧 第2期" -> "某番剧"
+    "某番剧 THE ANIMATION 第1巻 [中文字幕]" -> "某番剧 THE ANIMATION"
+    "某番剧【1080P】" -> "某番剧"
     """
     if not title:
         return title
+
+    def _strip_trailing_brackets(s: str) -> str:
+        # 去掉结尾的 [中文字幕] / 【1080P】 / （无码） 等标签（可能连续多个）
+        prev = None
+        while prev != s:
+            prev = s
+            s = re.sub(r'\s*[\[【（(][^\]】）)]*[\]】）)]\s*$', '', s)
+        return s.strip()
 
     # 去掉常见的编号后缀模式
     # 注意顺序：Season N 必须排在纯数字之前，否则 "某番剧 Season 2" 会先被 \d+$ 剥成 "某番剧 Season"
@@ -64,14 +74,15 @@ def extract_series_name(title: str) -> str:
         r'[・\s][赤青黒白紅緑黄紫]$',              # 不潔之星・赤 -> 不潔之星
         r'\s*[第ⅠⅡⅢ]\s*$',                      # 某番剧 第Ⅱ -> 某番剧
         r'\s*Season\s*\d+$',                      # 某番剧 Season 2 -> 某番剧
+        r'\s*第\s*\d+\s*[期章部話巻卷]$',          # 某番剧 第2期/第1巻 -> 某番剧
         r'\s*\d+$',                               # 某番剧 2 -> 某番剧
-        r'\s*第\d+[期章部話]$',                    # 某番剧 第2期 -> 某番剧
         r'[・\-]\s*\d+$',                         # 某番剧・2 -> 某番剧
     ]
 
-    result = title
+    result = _strip_trailing_brackets(title.strip())
     for pattern in patterns:
         new_result = re.sub(pattern, '', result, flags=re.IGNORECASE)
+        new_result = _strip_trailing_brackets(new_result)
         if new_result != result and len(new_result) >= 2:
             result = new_result
 
@@ -1332,6 +1343,11 @@ class VideoService:
             logger.info(
                 f"详情页未发现系列区块，通过搜索补全系列: '{series_name}'，"
                 f"命中 {len(candidates)} 集（当前视频 {video_id}）"
+            )
+        else:
+            logger.info(
+                f"系列搜索补全无命中: series_name='{series_name}'，"
+                f"原始标题='{video_title}'（当前视频 {video_id}）"
             )
         return candidates[:max_results]
 
