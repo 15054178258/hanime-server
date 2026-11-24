@@ -54,7 +54,9 @@ class DownloadWebSocketManager {
     
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host;
-    const wsUrl = `${protocol}//${host}/api/downloads/ws`;
+    // WS 无法携带 Authorization header，token 通过查询参数传递（后端手动校验）
+    const token = localStorage.getItem('token') || '';
+    const wsUrl = `${protocol}//${host}/api/downloads/ws?token=${encodeURIComponent(token)}`;
     
     try {
       this.ws = new WebSocket(wsUrl);

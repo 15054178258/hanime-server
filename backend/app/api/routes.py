@@ -38,6 +38,13 @@ api_router.include_router(
     dependencies=[Depends(get_current_user)]
 )
 
+# 下载进度 WebSocket（token 通过 ?token= 查询参数校验，不能用 Bearer 依赖）
+api_router.include_router(
+    downloads.ws_router,
+    prefix="/downloads",
+    tags=["下载"]
+)
+
 # 封面图片路由（不需要 Bearer header 认证，通过 ?token=xxx 查询参数认证）
 api_router.include_router(
     downloads.cover_router,

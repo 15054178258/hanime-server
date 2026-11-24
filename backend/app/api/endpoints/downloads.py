@@ -35,6 +35,9 @@ class SeriesMergeRequest(BaseModel):
     items: List[dict]                   # [{"video_id": "13007", "season_number": 1}, {"video_id": "13405", "season_number": 2}]
 
 router = APIRouter()
+# WebSocket 专用路由器：不挂 router 级 Bearer 鉴权（HTTPBearer 依赖无法用于
+# WebSocket 作用域，会导致握手即 TypeError 崩溃），改为端点内 ?token= 手动校验
+ws_router = APIRouter()
 
 @router.on_event("startup")
 async def startup():
@@ -44,9 +47,19 @@ async def startup():
     await download_manager.load_downloads()
 
 
-@router.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket):
-    """WebSocket连接处理，用于实时更新下载进度"""
+@ws_router.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket, token: str = Query("")):
+    """WebSocket连接处理，用于实时更新下载进度
+
+    鉴权：router 级 get_current_user 依赖（HTTPBearer）无法用于 WebSocket
+    作用域，因此 ws_router 单独挂载，改用 ?token= 查询参数手动校验。
+    """
+    try:
+        payload = verify_token(token)
+    except Exception:
+        await websocket.close(code=4401)
+        return
+
     try:
         await websocket.accept()
     except Exception as e:
