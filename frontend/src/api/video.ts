@@ -1,4 +1,5 @@
 import request from '../utils/request.ts';
+import { proxyImageUrls } from '../utils/image.ts';
 import { HomeData, VideoDetail, VideoComment, CommentReply, SearchResults, SearchCombination, CalendarData } from '../types/video';
 
 // 搜索参数接口
@@ -23,7 +24,8 @@ export const VideoApi = {
   getHomeData: async (): Promise<HomeData> => {
     try {
       const response = await request.get<HomeData>(`/videos/home`);
-      return response.data;
+      // v4.0.3: 外部图片改写为后端代理地址，避免浏览器直连 CDN 抖动加载失败
+      return proxyImageUrls(response.data);
     } catch (error: any) {
       console.error('获取首页数据失败:', error);
       // 503表示外部网站暂时不可用，返回空数据让页面正常显示
@@ -51,7 +53,7 @@ export const VideoApi = {
       await request.post('/settings/clear-cache/home');
       // 再获取新数据
       const response = await request.get<HomeData>(`/videos/home`);
-      return response.data;
+      return proxyImageUrls(response.data);
     } catch (error: any) {
       console.error('刷新首页数据失败:', error);
       return {
@@ -75,7 +77,7 @@ export const VideoApi = {
   getVideoDetail: async (videoId: string): Promise<VideoDetail | null> => {
     try {
       const response = await request.get<VideoDetail>(`/videos/detail/${videoId}`);
-      return response.data;
+      return proxyImageUrls(response.data);
     } catch (error) {
       console.error('获取视频详情失败:', error);
       return null;
@@ -88,7 +90,7 @@ export const VideoApi = {
   getVideoComments: async (videoId: string): Promise<VideoComment[]> => {
     try {
       const response = await request.get<VideoComment[]>(`/videos/loadComments/${videoId}`);
-      return response.data;
+      return proxyImageUrls(response.data);
     } catch (error) {
       console.error('获取视频评论失败:', error);
       return [];
@@ -101,7 +103,7 @@ export const VideoApi = {
   getCommentReplies: async (commentId: string): Promise<CommentReply[]> => {
     try {
       const response = await request.get<CommentReply[]>(`/videos/loadReplies/${commentId}`);
-      return response.data;
+      return proxyImageUrls(response.data);
     } catch (error) {
       console.error('获取评论回复失败:', error);
       return [];
@@ -141,7 +143,7 @@ export const VideoApi = {
           indexes: null // 这会使 axios 生成 tags=值1&tags=值2 格式而不是 tags[0]=值1
         }
       });
-      return response.data;
+      return proxyImageUrls(response.data);
     } catch (error) {
       console.error('搜索视频失败:', error);
       return {
@@ -160,7 +162,7 @@ export const VideoApi = {
   getCalendarData: async (): Promise<CalendarData> => {
     try {
       const response = await request.get<CalendarData>('/videos/calendar');
-      return response.data;
+      return proxyImageUrls(response.data);
     } catch (error) {
       console.error('获取日历数据失败:', error);
       return { days: [], error: '获取日历数据失败' };

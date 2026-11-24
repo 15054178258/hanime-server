@@ -72,6 +72,9 @@ class Settings(BaseModel):
     # v4.0.0: 同时下载的最大视频数（超出排队等待，避免打满带宽）
     MAX_CONCURRENT_DOWNLOADS: int = int(os.getenv("MAX_CONCURRENT_DOWNLOADS", "3"))
 
+    # v4.0.3: 外部图片代理缓存上限（MB）。超出后按最久未访问淘汰，<=0 表示不限制
+    IMAGE_CACHE_MAX_MB: int = int(os.getenv("IMAGE_CACHE_MAX_MB", "512"))
+
     CLOUDFLARE_BYPASS_SERVICE_URL: str = os.getenv("CLOUDFLARE_BYPASS_SERVICE_URL", "")
 
     # 刮削设置（NFO元数据生成，使绿联NAS影视中心能识别）

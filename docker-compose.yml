@@ -17,6 +17,7 @@ services:
       - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-minioadmin}
       - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-minioadmin}
       - MINIO_BUCKET=${MINIO_BUCKET:-hanime}
+      - IMAGE_CACHE_MAX_MB=${IMAGE_CACHE_MAX_MB:-512}
       - PYTHONOPTIMIZE=2
       - PYTHONDONTWRITEBYTECODE=1
     volumes:

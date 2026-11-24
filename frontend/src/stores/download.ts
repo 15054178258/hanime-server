@@ -539,6 +539,31 @@ export const useDownloadStore = defineStore('download', {
     },
     
     /**
+     * 批量开始下载（系列下载）：后端后台逐集入队
+     */
+    async startBatchDownload(videoIds: string[], force: boolean = false) {
+      if (!videoIds || videoIds.length === 0) {
+        ElMessage.warning('没有需要下载的视频');
+        return false;
+      }
+      try {
+        const result = await DownloadApi.startBatchDownload(videoIds, force);
+        if (result.status === 'started') {
+          // 主动刷新下载列表，新下载项会随后台解析逐步出现
+          this.refreshDownloads();
+          this.startPolling();
+          return true;
+        }
+        ElMessage.error(result.message || '批量开始下载失败');
+        return false;
+      } catch (error) {
+        console.error('批量开始下载失败:', error);
+        ElMessage.error('批量开始下载失败');
+        return false;
+      }
+    },
+
+    /**
      * 暂停下载
      */
     async pauseDownload(videoId: string) {

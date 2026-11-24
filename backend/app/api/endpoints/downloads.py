@@ -1,52 +1,27 @@
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, Depends, HTTPException
 from fastapi.responses import FileResponse, Response
 from app.services.download_service import download_manager
+from app.services.video_service import extract_series_name as _extract_series_name
 from app.models.download import DownloadRequest, DownloadAction
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 from app.config import settings, logger
 from app.utils.auth import get_current_user, verify_token
+import asyncio
 import os
 import re
-
-
-def _extract_series_name(title: str) -> str:
-    """
-    从番剧标题中提取系列名（去掉编号后缀）
-
-    示例：
-    "不潔之星・赤" -> "不潔之星"
-    "OVA ケガレボシ・赤" -> "OVA ケガレボシ"
-    "不洁之星 2" -> "不洁之星"
-    "某番剧 第2期" -> "某番剧"
-    """
-    if not title:
-        return title
-
-    # 去掉常见的编号后缀模式
-    # 注意顺序：Season N 必须排在纯数字之前，否则 "某番剧 Season 2" 会先被 \d+$ 剥成 "某番剧 Season"
-    patterns = [
-        r'[・\s][赤青黒白紅緑黄紫]$',              # 不潔之星・赤 -> 不潔之星
-        r'\s*[第ⅠⅡⅢ]\s*$',                      # 某番剧 第Ⅱ -> 某番剧
-        r'\s*Season\s*\d+$',                      # 某番剧 Season 2 -> 某番剧
-        r'\s*\d+$',                               # 某番剧 2 -> 某番剧
-        r'\s*第\d+[期章部話]$',                    # 某番剧 第2期 -> 某番剧
-        r'[・\-]\s*\d+$',                         # 某番剧・2 -> 某番剧
-    ]
-
-    result = title
-    for pattern in patterns:
-        new_result = re.sub(pattern, '', result, flags=re.IGNORECASE)
-        if new_result != result and len(new_result) >= 2:
-            result = new_result
-
-    return result.strip()
 
 
 class BatchDeleteRequest(BaseModel):
     """批量删除请求"""
     video_ids: List[str]
     delete_files: bool = True
+
+
+class BatchDownloadRequest(BaseModel):
+    """批量下载请求（系列下载）"""
+    video_ids: List[str]
+    force: bool = False
 
 
 class SeriesDetectRequest(BaseModel):
@@ -128,6 +103,54 @@ async def start_download(download_request: DownloadRequest, user: dict = Depends
         user["username"],
         download_request.force
     )
+
+
+@router.post("/start-batch")
+async def start_batch_download(batch_request: BatchDownloadRequest, user: dict = Depends(get_current_user)):
+    """
+    批量开始下载（系列下载）
+    - 立即返回，后台逐集解析详情并加入下载队列（避免并发抓取源站被限流）
+    - 已在下载列表/已完成的视频自动跳过（force=False 时）
+    - 并发数由 MAX_CONCURRENT_DOWNLOADS 控制，超出自动排队
+    """
+    video_ids = list(dict.fromkeys(v for v in batch_request.video_ids if v))  # 去重保序
+    if not video_ids:
+        raise HTTPException(status_code=400, detail="video_ids 不能为空")
+    if len(video_ids) > 100:
+        raise HTTPException(status_code=400, detail="单次批量下载数量过多（上限 100）")
+
+    username = user["username"]
+    force = batch_request.force
+
+    async def _run_batch():
+        ok, skipped, failed = 0, 0, 0
+        for vid in video_ids:
+            try:
+                result = await download_manager.start_download(vid, username, force)
+                status = (result or {}).get("status")
+                if status == "success":
+                    ok += 1
+                elif status == "warning":
+                    skipped += 1
+                else:
+                    failed += 1
+                    logger.warning(f"批量下载入队失败: {vid} - {(result or {}).get('message')}")
+            except Exception as e:
+                failed += 1
+                logger.warning(f"批量下载异常: {vid} - {e}")
+        logger.info(
+            f"系列批量下载完成: 共 {len(video_ids)} 集，"
+            f"入队 {ok}，跳过(已存在) {skipped}，失败 {failed}"
+        )
+
+    asyncio.create_task(_run_batch())
+    logger.info(f"系列批量下载已开始: 用户={username}, 共 {len(video_ids)} 集")
+
+    return {
+        "status": "started",
+        "total": len(video_ids),
+        "message": f"已开始批量下载 {len(video_ids)} 个视频，将逐集解析并排队下载"
+    }
 
 
 @router.post("/action")

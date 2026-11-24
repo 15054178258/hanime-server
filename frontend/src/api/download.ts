@@ -98,6 +98,25 @@ export const DownloadApi = {
   },
 
   /**
+   * 批量开始下载（系列下载）
+   * 后端后台逐集解析并入队，立即返回，避免前端并发抓取源站
+   * @param videoIds 视频ID列表
+   * @param force 是否强制重新下载已存在的视频
+   */
+  startBatchDownload: async (videoIds: string[], force: boolean = false) => {
+    try {
+      const response = await request.post('/downloads/start-batch', {
+        video_ids: videoIds,
+        force
+      });
+      return response.data;
+    } catch (error) {
+      console.error('批量开始下载失败:', error);
+      return { status: 'error', message: '批量开始下载失败' };
+    }
+  },
+
+  /**
    * 执行下载操作 (暂停/继续/取消/重试/删除)
    * @param videoId 视频ID
    * @param action 操作类型

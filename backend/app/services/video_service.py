@@ -45,6 +45,39 @@ def _cache_set_video_detail(video_id: str, detail) -> None:
                 del _detail_cache[k]
 
 
+def extract_series_name(title: str) -> str:
+    """
+    从番剧标题中提取系列名（去掉编号后缀）
+
+    示例：
+    "不潔之星・赤" -> "不潔之星"
+    "OVA ケガレボシ・赤" -> "OVA ケガレボシ"
+    "不洁之星 2" -> "不洁之星"
+    "某番剧 第2期" -> "某番剧"
+    """
+    if not title:
+        return title
+
+    # 去掉常见的编号后缀模式
+    # 注意顺序：Season N 必须排在纯数字之前，否则 "某番剧 Season 2" 会先被 \d+$ 剥成 "某番剧 Season"
+    patterns = [
+        r'[・\s][赤青黒白紅緑黄紫]$',              # 不潔之星・赤 -> 不潔之星
+        r'\s*[第ⅠⅡⅢ]\s*$',                      # 某番剧 第Ⅱ -> 某番剧
+        r'\s*Season\s*\d+$',                      # 某番剧 Season 2 -> 某番剧
+        r'\s*\d+$',                               # 某番剧 2 -> 某番剧
+        r'\s*第\d+[期章部話]$',                    # 某番剧 第2期 -> 某番剧
+        r'[・\-]\s*\d+$',                         # 某番剧・2 -> 某番剧
+    ]
+
+    result = title
+    for pattern in patterns:
+        new_result = re.sub(pattern, '', result, flags=re.IGNORECASE)
+        if new_result != result and len(new_result) >= 2:
+            result = new_result
+
+    return result.strip()
+
+
 class VideoService:
     def __init__(self):
         """初始化视频服务"""
@@ -890,6 +923,14 @@ class VideoService:
 
             series_videos = self._extract_series_videos(soup)
 
+            # v4.0.3: 兜底——详情页没有系列区块（multiple-link-wrapper）时，
+            # 用系列名搜索补全系列集数，保证前端能显示"系列下载"按钮
+            if not series_videos and video_title:
+                try:
+                    series_videos = await self._find_series_by_search(video_title, video_id)
+                except Exception as e:
+                    logger.warning(f"搜索方式补全系列失败: {e}")
+
             basic_related_videos = self._extract_related_videos_based(soup)
             detailed_related_videos = self._extract_related_videos_detailed(soup)
 
@@ -1261,6 +1302,38 @@ class VideoService:
                 series_videos.append(video_info)
 
         return series_videos
+
+    async def _find_series_by_search(self, video_title: str, video_id: str, max_results: int = 30) -> List[VideoPreview]:
+        """
+        通过搜索接口补全系列视频（详情页无系列区块时的兜底方案）
+        - 用标题去掉编号后的系列名搜索
+        - 只保留"提取系列名后一致"的结果，过滤同名但不同系列的误报
+        - 排除当前视频自身
+        """
+        series_name = extract_series_name(video_title)
+        if not series_name or len(series_name) < 2:
+            return []
+
+        result = await self.search_videos(
+            query=series_name, genre=None, tags=None, broad=None,
+            sort="最新上市", year=None, month=None, page=1
+        )
+
+        candidates: List[VideoPreview] = []
+        seen_ids = set()
+        for v in (result.detailed_videos or []):
+            if v.video_id == video_id or v.video_id in seen_ids:
+                continue
+            if extract_series_name(v.title) == series_name:
+                seen_ids.add(v.video_id)
+                candidates.append(v)
+
+        if candidates:
+            logger.info(
+                f"详情页未发现系列区块，通过搜索补全系列: '{series_name}'，"
+                f"命中 {len(candidates)} 集（当前视频 {video_id}）"
+            )
+        return candidates[:max_results]
 
     async def get_calendar_data(self) -> CalendarData:
         """获取日历/新番列表数据 - 通过搜索 API 构建各类型最新番剧"""

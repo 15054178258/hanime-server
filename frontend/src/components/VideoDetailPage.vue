@@ -943,23 +943,11 @@ export default defineComponent({
         
         // 异步处理下载，不阻塞UI
         if (videosToDownload.length > 0) {
-          // 使用Promise.all并行发送所有下载请求
-          Promise.all(
-            videosToDownload.map(videoId => 
-              downloadStore.startDownload(videoId, false)
-                .catch(error => {
-                  console.error(`下载视频 ${videoId} 失败:`, error);
-                  return { status: 'error', videoId };
-                })
-            )
-          )
-          .then(results => {
-            // 这里可以处理所有下载请求的结果，但不会阻塞用户界面
-            const successCount = results.filter(result => result === true).length;
-            const failedCount = results.filter(result => result && result.status === 'error').length;
-            
-            console.log(`系列下载结果: 成功=${successCount}, 失败=${failedCount}, 已存在=${alreadyDownloadedCount}`);
-          });
+          // v4.0.3: 一次批量请求，后端后台逐集解析并入队（避免并发抓取源站被限流）
+          downloadStore.startBatchDownload(videosToDownload, false)
+            .then(ok => {
+              console.log(`系列批量下载请求: ${ok ? '已提交' : '提交失败'}`);
+            });
         }
       } catch (error) {
         console.error('系列下载失败:', error);

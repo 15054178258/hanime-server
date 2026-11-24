@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends
-from app.api.endpoints import videos, downloads, accounts, settings, auth, scrape
+from app.api.endpoints import videos, downloads, accounts, settings, auth, scrape, images
 from app.services.download_service import download_manager
 from app.config import logger, settings as app_settings
 from app.utils.auth import get_current_user
@@ -43,6 +43,13 @@ api_router.include_router(
     downloads.cover_router,
     prefix="/downloads",
     tags=["下载"]
+)
+
+# 外部图片代理路由（v4.0.3: 无需登录，内置 SSRF 防护与磁盘缓存）
+api_router.include_router(
+    images.images_router,
+    prefix="/images",
+    tags=["图片代理"]
 )
 
 # 用户账户相关路由（需要登录）

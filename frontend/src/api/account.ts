@@ -1,4 +1,5 @@
 import request from '../utils/request';
+import { proxyImageUrls, originalImageUrl } from '../utils/image';
 
 export interface UserVideoItem {
   video_id: string;
@@ -28,12 +29,12 @@ export interface VideoActionResponse {
 export class AccountApi {
   static async getFavorites(): Promise<UserVideoItem[]> {
     const response = await request.get('/accounts/me/favorites');
-    return response.data.favorites || [];
+    return proxyImageUrls(response.data.favorites || []);
   }
 
   static async addFavorite(video_id: string, title: string, cover_url: string): Promise<VideoActionResponse> {
     const response = await request.post('/accounts/me/favorites', null, {
-      params: { video_id, title, cover_url }
+      params: { video_id, title, cover_url: originalImageUrl(cover_url) }
     });
     return response.data;
   }
@@ -50,12 +51,12 @@ export class AccountApi {
 
   static async getWatchLater(): Promise<UserVideoItem[]> {
     const response = await request.get('/accounts/me/watch_later');
-    return response.data.watch_later || [];
+    return proxyImageUrls(response.data.watch_later || []);
   }
 
   static async addWatchLater(video_id: string, title: string, cover_url: string): Promise<VideoActionResponse> {
     const response = await request.post('/accounts/me/watch_later', null, {
-      params: { video_id, title, cover_url }
+      params: { video_id, title, cover_url: originalImageUrl(cover_url) }
     });
     return response.data;
   }
@@ -72,7 +73,7 @@ export class AccountApi {
 
   static async getPlaylists(): Promise<UserPlaylist[]> {
     const response = await request.get('/accounts/me/playlists');
-    return response.data.playlists || [];
+    return proxyImageUrls(response.data.playlists || []);
   }
 
   static async createPlaylist(name: string): Promise<UserPlaylist> {
@@ -89,12 +90,12 @@ export class AccountApi {
 
   static async getPlaylist(playlist_id: string): Promise<UserPlaylist> {
     const response = await request.get(`/accounts/me/playlists/${playlist_id}`);
-    return response.data.playlist;
+    return proxyImageUrls(response.data.playlist);
   }
 
   static async addVideoToPlaylist(playlist_id: string, video_id: string, title: string, cover_url: string): Promise<VideoActionResponse> {
     const response = await request.post(`/accounts/me/playlists/${playlist_id}/videos`, null, {
-      params: { video_id, title, cover_url }
+      params: { video_id, title, cover_url: originalImageUrl(cover_url) }
     });
     return response.data;
   }
@@ -120,12 +121,12 @@ export class AccountApi {
 
   static async getWatchHistory(): Promise<WatchHistoryItem[]> {
     const response = await request.get('/accounts/me/history');
-    return response.data.history || [];
+    return proxyImageUrls(response.data.history || []);
   }
 
   static async addWatchHistory(video_id: string, title: string, cover_url: string, progress: number = 0, duration: string = ''): Promise<VideoActionResponse> {
     const response = await request.post('/accounts/me/history', null, {
-      params: { video_id, title, cover_url, progress, duration }
+      params: { video_id, title, cover_url: originalImageUrl(cover_url), progress, duration }
     });
     return response.data;
   }
@@ -170,7 +171,7 @@ export class AccountApi {
   // 检查订阅系列是否有新集（返回系列名 + has_new + 最新集信息）
   static async checkSubscriptions(): Promise<any[]> {
     const response = await request.get('/accounts/me/subscriptions/check');
-    return response.data.results || [];
+    return proxyImageUrls(response.data.results || []);
   }
 
   // ==================== v4.0.0: 用户信息与管理（管理员） ====================

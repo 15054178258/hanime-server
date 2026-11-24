@@ -11,4 +11,6 @@ services:
       - TZ=Asia/Shanghai
       - USE_PROXY=false
       - PROXY_URL=
+      # 图片代理缓存上限（MB），超出自动淘汰最久未访问的图片
+      - IMAGE_CACHE_MAX_MB=512
     restart: unless-stopped
