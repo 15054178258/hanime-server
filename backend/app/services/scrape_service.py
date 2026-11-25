@@ -92,6 +92,10 @@ class ScrapeService:
         # v3.6.3: 自动刮削互斥锁——多个下载并发完成时，串行执行自动刮削，
         # 避免多个全量刮削任务同时写同一批 NFO/图片/目录产生竞态
         self._auto_scrape_lock = asyncio.Lock()
+        # v4.0.6: 记录每个系列目录最近一次自动刮削完成时间（去抖：
+        # 批量下载每集完成都会触发一次自动刮削，等待结束后会连续排队
+        # 多次刮削同一系列，重复拉取元数据/翻译，浪费且易触发限流）
+        self._last_auto_scrape: Dict[str, float] = {}
 
     # ==================== 主流程 ====================
 
@@ -293,9 +297,81 @@ class ScrapeService:
         但传入 force_regenerate_covers=False，已有单集封面直接复用，只补缺失项，
         避免每下载一集都重新拉取整个系列的所有封面。
         同时通过 _auto_scrape_lock 串行化并发触发的自动刮削，防止竞态。
+
+        v4.0.6 修复：先等待同系列其他下载完成再刮削。此前批量下载中第一集
+        下完就触发整目录刮削，刮削的重命名/目录搬迁会把仍在下载中的文件挪走，
+        导致后续集下载写盘失败（"截断文件失败: No such file..."）或文件被
+        错误重命名覆盖（曾出现 S01E04→S01E06、S01E05→S01E06 互相覆盖，
+        最终 6 集只落盘 3 集）。每个下载完成都会触发一次本方法，
+        因此最后一集完成时必然没有同系列下载在跑，刮削不会遗漏。
         """
+        await self._wait_same_series_downloads(video_id)
         async with self._auto_scrape_lock:
             await self._auto_scrape_after_download_locked(video_id)
+
+    def _get_active_same_series_downloads(self, video_id: str) -> List[str]:
+        """
+        找出与 video_id 同系列、仍在进行中（排队/下载中/暂停）的下载任务。
+
+        通过下载记录 filename 的系列目录前缀（"系列名/xxx.mp4"）判定同系列；
+        无法确定前缀时退化为"任意进行中的下载都算阻塞"（保守但安全）。
+        """
+        active_statuses = {"pending", "downloading", "paused"}
+        try:
+            from app.models.download import DownloadStatus
+            active_statuses = {
+                DownloadStatus.PENDING.value,
+                DownloadStatus.DOWNLOADING.value,
+                DownloadStatus.PAUSED.value,
+            }
+        except Exception:
+            pass
+
+        try:
+            from app.services.download_service import download_manager
+
+            current = download_manager.active_downloads.get(video_id)
+            prefix = None
+            if current is not None:
+                fn = (current.filename or "").replace("\\", "/")
+                if "/" in fn:
+                    prefix = fn.split("/", 1)[0]
+
+            others: List[str] = []
+            for vid, progress in download_manager.active_downloads.items():
+                if vid == video_id:
+                    continue
+                status_value = getattr(progress.status, "value", str(progress.status))
+                if status_value not in active_statuses:
+                    continue
+                if prefix is not None:
+                    fn = (getattr(progress, "filename", "") or "").replace("\\", "/")
+                    if not fn.startswith(prefix + "/"):
+                        continue  # 不同系列，不阻塞
+                others.append(vid)
+            return others
+        except Exception as e:
+            logger.warning(f"自动刮削: 检查活跃下载状态失败: {e}")
+            return []
+
+    async def _wait_same_series_downloads(
+        self, video_id: str, max_wait_seconds: int = 1800, interval: int = 10
+    ):
+        """等待同系列其他下载完成（最长 max_wait_seconds，超时后照常刮削）"""
+        waited = 0
+        while waited < max_wait_seconds:
+            others = self._get_active_same_series_downloads(video_id)
+            if not others:
+                return
+            logger.info(
+                f"自动刮削延后: 同系列还有 {len(others)} 个下载未完成 {others}"
+                f"（当前视频 {video_id}），{interval}s 后重新检查"
+            )
+            await asyncio.sleep(interval)
+            waited += interval
+        logger.warning(
+            f"自动刮削: 等待同系列下载超时（{max_wait_seconds}s），强制执行刮削（当前视频 {video_id}）"
+        )
 
     async def _auto_scrape_after_download_locked(self, video_id: str):
         """自动刮削的实际逻辑（在互斥锁内执行）"""
@@ -361,6 +437,17 @@ class ScrapeService:
             series_name = download_info["series_name"]
             series_dir = download_info["series_dir"]
 
+            # v4.0.6: 去抖——同系列目录 180s 内刚自动刮削过则跳过
+            import time as _time
+            key = str(series_dir)
+            last = self._last_auto_scrape.get(key)
+            if last is not None and (_time.monotonic() - last) < 180:
+                logger.info(
+                    f"自动刮削跳过（去抖）: {series_name} 距上次自动刮削不足 180s"
+                    f"（当前视频 {video_id}）"
+                )
+                return
+
             logger.info(f"自动刮削开始: {series_name} / {video_id}")
 
             # 使用配置的模式
@@ -377,6 +464,7 @@ class ScrapeService:
             )
 
             if result.is_success:
+                self._last_auto_scrape[key] = _time.monotonic()
                 logger.success(f"自动刮削完成: {series_name}")
             else:
                 logger.warning(f"自动刮削失败: {series_name} - {result.error_message}")
@@ -1982,6 +2070,14 @@ class ScrapeService:
                     new_filename = video_path.name
 
                 new_path = season_dir / new_filename
+
+                # v4.0.6: 目标已存在时跳过重命名，避免覆盖已有文件
+                # （曾出现两集先后被重命名到同一个 E06 文件名，后者覆盖前者导致数据丢失）
+                if video_path != new_path and new_path.exists():
+                    logger.warning(
+                        f"跳过重命名（目标文件已存在，避免覆盖）: {video_path.name} -> {new_path.name}"
+                    )
+                    continue
 
                 if video_path.exists() and video_path != new_path:
                     try:
