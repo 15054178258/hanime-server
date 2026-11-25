@@ -936,8 +936,15 @@ class VideoService:
 
             series_videos = self._extract_series_videos(soup)
 
-            # v4.0.3: 兜底——详情页没有系列区块（multiple-link-wrapper）时，
-            # 用系列名搜索补全系列集数，保证前端能显示"系列下载"按钮
+            # v4.0.5: 站点真正的系列机制是播放列表面板 #playlist-scroll
+            # （multiple-link-wrapper 在当前页面结构已不存在），优先于搜索兜底
+            if not series_videos and video_id:
+                try:
+                    series_videos = self._extract_playlist_videos(soup, video_id)
+                except Exception as e:
+                    logger.warning(f"播放列表系列提取失败: {e}")
+
+            # v4.0.3: 兜底——播放列表也没有其他分集时，用系列名搜索补全系列集数
             if not series_videos and video_title:
                 try:
                     series_videos = await self._find_series_by_search(video_title, video_id)
@@ -1314,6 +1321,58 @@ class VideoService:
             if video_info:
                 series_videos.append(video_info)
 
+        return series_videos
+
+    def _extract_playlist_videos(self, soup: BeautifulSoup, current_video_id: str) -> List[VideoPreview]:
+        """
+        v4.0.5: 从播放列表面板提取系列视频（站点真正的系列归组机制）
+
+        实测 hanime1.me：影片页播放器旁的 #playlist-scroll 播放列表面板
+        就是站点的系列归组——系列影片会列出全部分集（人工归组，含顺序/时长/封面，
+        标题可能为本地化语言，无需做任何标题匹配）；独立影片面板中只有自身。
+        旧的 multiple-link-wrapper 区块在当前页面结构中已不存在（实测 0 次）。
+        面板在桌面/移动布局下重复渲染，按 video_id 去重。
+        """
+        series_videos: List[VideoPreview] = []
+        playlist = soup.find(id='playlist-scroll')
+        if not playlist:
+            return series_videos
+
+        seen_ids = set()
+        for wrap in playlist.find_all('div', class_='playlist-hover-wrap'):
+            href = wrap.get('data-href') or ''
+            vid = self._extract_video_id(href)
+            if not vid or vid in seen_ids:
+                continue
+            seen_ids.add(vid)
+            if vid == current_video_id:
+                continue  # 系列列表不含当前视频自身
+
+            title = ''
+            t = wrap.find('h4', class_='video-title')
+            if t:
+                a = t.find('a')
+                title = a.get_text(strip=True) if a else t.get_text(strip=True)
+
+            duration = ''
+            d = wrap.find('div', class_='duration')
+            if d:
+                duration = d.get_text(strip=True)
+
+            cover_url = ''
+            img = wrap.find('img')
+            if img:
+                cover_url = img.get('src') or img.get('data-src') or ''
+
+            series_videos.append(VideoPreview(
+                video_id=vid, title=title, cover_url=cover_url, duration=duration
+            ))
+
+        if series_videos:
+            logger.info(
+                f"从播放列表面板提取到 {len(series_videos)} 部同系列影片"
+                f"（面板共 {len(seen_ids)} 条，当前视频 {current_video_id}）"
+            )
         return series_videos
 
     async def _find_series_by_search(self, video_title: str, video_id: str, max_results: int = 30) -> List[VideoPreview]:
