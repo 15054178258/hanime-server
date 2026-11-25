@@ -938,21 +938,36 @@ class VideoService:
 
             # v4.0.5: 站点真正的系列机制是播放列表面板 #playlist-scroll
             # （multiple-link-wrapper 在当前页面结构已不存在），优先于搜索兜底
+            playlist_only_self = False
             if not series_videos and video_id:
                 try:
-                    series_videos = self._extract_playlist_videos(soup, video_id)
+                    series_videos, playlist_only_self = self._extract_playlist_videos(soup, video_id)
                 except Exception as e:
                     logger.warning(f"播放列表系列提取失败: {e}")
 
             # v4.0.3: 兜底——播放列表也没有其他分集时，用系列名搜索补全系列集数
-            if not series_videos and video_title:
+            # v4.0.5: 播放列表面板存在但只有当前视频（站点判定独立影片）时跳过搜索，
+            # 节省一次源站请求并避免搜索误判
+            if not series_videos and video_title and not playlist_only_self:
                 try:
                     series_videos = await self._find_series_by_search(video_title, video_id)
                 except Exception as e:
                     logger.warning(f"搜索方式补全系列失败: {e}")
 
+            # v4.0.5: 系列分集按 video_id 升序（早期集在前），
+            # 与下载归档的 Season 编号规则（按 video_id 排序）保持一致
+            if len(series_videos) > 1 and all(v.video_id.isdigit() for v in series_videos):
+                series_videos.sort(key=lambda v: int(v.video_id))
+
             basic_related_videos = self._extract_related_videos_based(soup)
             detailed_related_videos = self._extract_related_videos_detailed(soup)
+
+            # v4.0.5: 相关影片中排除同系列分集（源站会把分集排在相关影片最前面，
+            # 与"系列影片"区块重复展示）
+            if series_videos:
+                series_id_set = {v.video_id for v in series_videos} | {video_id}
+                basic_related_videos = [v for v in basic_related_videos if v.video_id not in series_id_set]
+                detailed_related_videos = [v for v in detailed_related_videos if v.video_id not in series_id_set]
 
             upload_date_value = None
             if upload_date_str:
@@ -1323,7 +1338,7 @@ class VideoService:
 
         return series_videos
 
-    def _extract_playlist_videos(self, soup: BeautifulSoup, current_video_id: str) -> List[VideoPreview]:
+    def _extract_playlist_videos(self, soup: BeautifulSoup, current_video_id: str) -> tuple:
         """
         v4.0.5: 从播放列表面板提取系列视频（站点真正的系列归组机制）
 
@@ -1332,11 +1347,15 @@ class VideoService:
         标题可能为本地化语言，无需做任何标题匹配）；独立影片面板中只有自身。
         旧的 multiple-link-wrapper 区块在当前页面结构中已不存在（实测 0 次）。
         面板在桌面/移动布局下重复渲染，按 video_id 去重。
+
+        返回 (series_videos, only_self)：
+        - only_self=True 表示面板存在但只有当前视频（站点判定为独立影片），
+          调用方可据此跳过搜索兜底，节省一次源站请求并避免误判
         """
         series_videos: List[VideoPreview] = []
         playlist = soup.find(id='playlist-scroll')
         if not playlist:
-            return series_videos
+            return series_videos, False
 
         seen_ids = set()
         for wrap in playlist.find_all('div', class_='playlist-hover-wrap'):
@@ -1368,12 +1387,14 @@ class VideoService:
                 video_id=vid, title=title, cover_url=cover_url, duration=duration
             ))
 
+        only_self = len(seen_ids) == 1 and current_video_id in seen_ids
+
         if series_videos:
             logger.info(
                 f"从播放列表面板提取到 {len(series_videos)} 部同系列影片"
                 f"（面板共 {len(seen_ids)} 条，当前视频 {current_video_id}）"
             )
-        return series_videos
+        return series_videos, only_self
 
     async def _find_series_by_search(self, video_title: str, video_id: str, max_results: int = 30) -> List[VideoPreview]:
         """
