@@ -1319,9 +1319,13 @@ class VideoService:
     async def _find_series_by_search(self, video_title: str, video_id: str, max_results: int = 30) -> List[VideoPreview]:
         """
         通过搜索接口补全系列视频（详情页无系列区块时的兜底方案）
-        - 用标题去掉编号后的系列名搜索
-        - 只保留"提取系列名后一致"的结果，过滤同名但不同系列的误报
-        - 排除当前视频自身
+
+        关键点：源站搜索页返回的是本地化语言标题（如繁体中文），
+        可能与详情页的日文标题完全不同语言，无法直接字符串匹配。
+        因此采用两级匹配策略：
+        1. 本地化聚类：若当前视频出现在搜索结果中，用其本地化标题提取的
+           系列名作为基准，聚类出所有同系列名的候选（语言自洽，最可靠）
+        2. 回退匹配：日文系列名相等 / 候选标题前缀匹配（本地化聚类不可用时）
         """
         series_name = extract_series_name(video_title)
         if not series_name or len(series_name) < 2:
@@ -1343,6 +1347,9 @@ class VideoService:
 
         candidates: List[VideoPreview] = []
         seen_ids = set()
+        localized_base = None  # 当前视频在搜索结果中的本地化标题的系列名
+        last_candidate_count = 0
+
         for q in queries:
             try:
                 result = await self.search_videos(
@@ -1354,29 +1361,52 @@ class VideoService:
                 continue
 
             for v in (result.detailed_videos or []):
-                if v.video_id == video_id or v.video_id in seen_ids:
+                if v.video_id == video_id:
+                    # 当前视频出现在结果中：记录其本地化标题的系列名
+                    if localized_base is None and v.title:
+                        localized_base = extract_series_name(v.title)
                     continue
-                v_series = _norm(extract_series_name(v.title)) if v.title else ''
-                v_title = _norm(v.title) if v.title else ''
-                # 匹配规则：系列名完全一致，或候选标题以系列名开头（兼容提取遗漏的后缀）
+                if v.video_id in seen_ids:
+                    continue
+                seen_ids.add(v.video_id)
+                candidates.append(v)
+
+            last_candidate_count = len(candidates)
+            if candidates and localized_base is not None:
+                break  # 已拿到候选和本地化基准，无需继续查询
+
+        # 匹配策略 1：本地化聚类（语言自洽，最可靠）
+        matched: List[VideoPreview] = []
+        if localized_base:
+            lb = _norm(localized_base)
+            matched = [v for v in candidates
+                       if v.title and _norm(extract_series_name(v.title)) == lb]
+
+        # 匹配策略 2：回退——日文系列名相等 / 候选标题前缀匹配
+        if not matched:
+            for v in candidates:
+                if not v.title:
+                    continue
+                v_series = _norm(extract_series_name(v.title))
+                v_title = _norm(v.title)
                 if v_series == target or (target and v_title.startswith(target)):
-                    seen_ids.add(v.video_id)
-                    candidates.append(v)
+                    matched.append(v)
 
-            if candidates:
-                break
-
-        if candidates:
+        if matched:
             logger.info(
                 f"详情页未发现系列区块，通过搜索补全系列: '{series_name}'，"
-                f"命中 {len(candidates)} 集（当前视频 {video_id}）"
+                f"命中 {len(matched)} 集"
+                f"（匹配方式={'本地化聚类' if localized_base else '标题匹配'}，"
+                f"本地化基准='{localized_base}'，当前视频 {video_id}）"
             )
         else:
             logger.info(
                 f"系列搜索补全无命中: series_name='{series_name}'，"
+                f"本地化基准='{localized_base}'，"
+                f"候选 {last_candidate_count} 条（查询词={queries}），"
                 f"原始标题='{video_title}'（当前视频 {video_id}）"
             )
-        return candidates[:max_results]
+        return matched[:max_results]
 
     async def get_calendar_data(self) -> CalendarData:
         """获取日历/新番列表数据 - 通过搜索 API 构建各类型最新番剧"""
