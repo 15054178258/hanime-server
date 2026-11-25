@@ -86,7 +86,9 @@ def extract_series_name(title: str) -> str:
         if new_result != result and len(new_result) >= 2:
             result = new_result
 
-    return result.strip()
+    # 清理剥离编号后残留的结尾分隔符，如 "某番剧!_1" -> "某番剧!_" -> "某番剧!"
+    result = re.sub(r'[\s_\-・.·]+$', '', result).strip()
+    return result
 
 
 class VideoService:

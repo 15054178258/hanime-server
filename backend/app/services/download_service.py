@@ -2277,6 +2277,8 @@ class DownloadManager:
                     result = new_result
             # 清理多余空格（中间集号剥离后会留下双空格）
             result = _re.sub(r'\s{2,}', ' ', result).strip()
+            # 清理剥离编号后残留的结尾分隔符，如 "某番剧!_1" -> "某番剧!_"
+            result = _re.sub(r'[\s_\-・.·]+$', '', result).strip()
             return result
 
         base_series_name = _extract_series_base(name_source)
